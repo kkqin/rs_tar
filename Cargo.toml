@@ -1,0 +1,8 @@
+[package]
+name = "pt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+#winapi = {version = "0.3.9", features=["fileapi", "handleapi", "winbase"]}
+memmap2 = "0.7"
