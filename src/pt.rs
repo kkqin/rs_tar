@@ -16,7 +16,7 @@ pub trait ImageInfo: Sized + Read + Seek {
     /// 获取镜像文件总大小
     fn get_size(&self) -> io::Result<u64>;
     fn read_img_at(&mut self, offset: u64, size: u64) -> io::Result<(Vec<u8>, u64)>;
-    fn get_file_at(&mut self, offset: u64, size: u64) -> io::Result<(Box<dyn FileInfo>,u64)>;
+    fn get_file_at(&mut self, offset: u64) -> io::Result<(Box<dyn FileInfo>,u64)>;
     /// 遍历所有条目，并在每个条目上调用回调
     fn for_each_entry<F>(&mut self, callback: F) -> io::Result<()>
     where
@@ -73,13 +73,15 @@ impl ImageInfo for TarImage {
         Ok((buf, n as u64))
     }
 
-    fn get_file_at(&mut self, offset: u64, size: u64) -> io::Result<(Box<dyn FileInfo>,u64)> {
-        let res = self.read_img_at(offset, size)?;
-        let (buf, n) = res;
-        if n < 512 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "not enough data"));
-        }
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "not implemented"))
+    fn get_file_at(&mut self, offset: u64) -> io::Result<(Box<dyn FileInfo>,u64)> {
+        match read_file_header(self, offset) {
+            Ok(file_res) => {
+                return Ok(file_res);
+            },
+            Err(e) => {
+                return Err(e);
+            }
+        };
     }
 
     fn for_each_entry<F>(&mut self, mut callback: F) -> io::Result<()>
@@ -89,8 +91,7 @@ impl ImageInfo for TarImage {
         let mut off: u64 = 0;
         while off < self.size {
             match read_file_header(self, off) {
-                Ok(file_res) => {
-                    let (file, n) = file_res;
+                Ok((file,n)) => {
                     let tar_file = try_into_tarfile(file)?;
                     let mut body_size = tar_file.header.get_size();
                     body_size = if (body_size % 512) == 0 {
