@@ -92,11 +92,20 @@ impl ImageInfo for TarImage {
                 Ok(file_res) => {
                     let (file, n) = file_res;
                     let tar_file = try_into_tarfile(file)?;
+                    let mut body_size = tar_file.header.get_size();
+                    body_size = if (body_size % 512) == 0 {
+                        body_size
+                    } else {
+                        ((body_size / 512) + 1) *512
+                    };
                     if tar_file.header.get_type_flag() == 'K' {
-                       off += tar_file.header_size;
+                        off += tar_file.header_size;
+                    } else {
+                        off += n + body_size;
                     }
-                    off += n;
-                    callback(tar_file)?;
+                    if tar_file.header.get_type_flag() != 'K' {
+                        callback(tar_file)?;
+                    }
                 },
                 Err(e) => {
                     eprintln!("Error reading file header: {}", e);
