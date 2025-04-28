@@ -1,3 +1,4 @@
+use core::num;
 use std::{fs::File, io::{self, Read, Seek, SeekFrom}, sync::Arc};
 use crate::tar::{TarHeader, read_tar_header};
 
@@ -10,8 +11,8 @@ pub trait ImageInfo: Sized + Read + Seek {
     fn open(path: &str) -> io::Result<Arc<Self>>;
     /// 获取镜像文件总大小
     fn get_size(&self) -> io::Result<u64>;
-    /// 根据偏移和长度打开文件片段
-    fn open_file_at(&mut self, offset: u64, size: u64) -> io::Result<(Box<dyn FileInfo>, u64)>;
+    fn read_img_at(&mut self, offset: u64, size: u64) -> io::Result<(Vec<u8>, u64)>;
+    fn get_file_at(&mut self, offset: u64, size: u64) -> io::Result<(Box<dyn FileInfo>,u64)>;
     /// 遍历所有条目，并在每个条目上调用回调
     fn for_each_entry<F>(&mut self, callback: F) -> io::Result<()>
     where
@@ -57,33 +58,24 @@ impl ImageInfo for TarImage {
         Ok(self.size)
     }
 
-    fn open_file_at(&mut self, offset: u64, size: u64) -> io::Result<(Box<dyn FileInfo>,u64)> {
-        self.seek(SeekFrom::Start(offset))?;
+    fn read_img_at(&mut self, offset: u64, size: u64) -> io::Result<(Vec<u8>, u64)> {
+        let mut file = self.file.as_ref().try_clone()?;
+        file.seek(SeekFrom::Start(offset))?;
         let mut buf = vec![0u8; size as usize];
-        self.read(&mut buf)?;
-        // 在 unsafe 外部声明并使用 hdr
-        let hdr_res: (TarHeader, u64);
-        unsafe {
-            hdr_res = match read_tar_header(&buf) {
-                Ok(res) => res,
-                Err(e) => return Err(e),
-            };
+        let n = file.read(&mut buf)?;
+        if n != size as usize {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "not enough data"));
         }
-        let (hdr, n) = hdr_res;
-        let mut tar_file = TarFile::new(Arc::new(self.clone()), hdr);
-        tar_file.base_offset = offset;
-        if hdr.get_type_flag() == '5' {
-            tar_file.file_type = TarFileType::Directory as i32;
-        } else if hdr.get_type_flag() == '1' {
-            tar_file.file_type = TarFileType::SymbolicLink as i32;
-            if self.last_link_name != "" {
-                tar_file.link = self.last_link_name.clone();
-            }
-        } else if hdr.get_type_flag() == 'K' {
-            self.last_link_name = hdr.get_link_name();
-        }
+        Ok((buf, n as u64))
+    }
 
-        Ok((Box::new(tar_file),n))
+    fn get_file_at(&mut self, offset: u64, size: u64) -> io::Result<(Box<dyn FileInfo>,u64)> {
+        let res = self.read_img_at(offset, size)?;
+        let (buf, n) = res;
+        if n < 512 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "not enough data"));
+        }
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "not implemented"))
     }
 
     fn for_each_entry<F>(&mut self, mut callback: F) -> io::Result<()>
@@ -108,9 +100,61 @@ impl ImageInfo for TarImage {
     }
 }
 
+/// 从 TarImage 读取 header 并返回 (header, total_header_size)
+pub fn tar_hdr_read_internal(img_info: &mut TarImage, offset: u64) -> io::Result<(TarHeader, u64)> {
+    const BLOCK_SIZE: u64 = 512;
+    let mut header_size: u64 = 0;
+    let mut num_zero_blocks: u32 = 0;
+
+    loop {
+        // 读取一个 512 字节块
+        let (buf, n) = img_info.read_img_at(offset + header_size, BLOCK_SIZE)
+            .map_err(|e| io::Error::new(e.kind(), format!("Error reading image at offset {}: {}", offset + header_size, e)))?;
+        if n < BLOCK_SIZE {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "not enough data"));
+        }
+
+        // 解析 tar header
+        let hdr   = unsafe { read_tar_header(&buf)? };
+        header_size += BLOCK_SIZE;
+
+        // 检测全零块 (EOF)
+        if hdr.get_name().is_empty() {
+            num_zero_blocks += 1;
+            if num_zero_blocks >= 2 {
+                // 两个全零块表示真正的 EOF，返回 size = 0
+                return Ok((hdr, 0));
+            } else {
+                // 第一个全零块，继续循环
+                continue;
+            }
+        }
+
+        // 验证 checksum
+        /*if !th_crc_ok(&hdr) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "tar header checksum error"));
+        }*/
+
+        // 成功解析到有效 header，返回 header 和已读取的大小
+        return Ok((hdr, header_size));
+    }
+}
+
 fn read_file_header(img_info :&mut TarImage, offset:u64) -> io::Result<(Box<dyn FileInfo>, u64)> {
-    let file_res = img_info.open_file_at(offset, 512)?;
-    Ok(file_res)
+    let (hdr, n) = tar_hdr_read_internal(img_info, offset)?;
+    let mut tar_file = TarFile::new(Arc::new(img_info.clone()), hdr);
+    tar_file.base_offset = offset;
+    if hdr.get_type_flag() == '5' {
+        tar_file.file_type = TarFileType::Directory as i32;
+    } else if hdr.get_type_flag() == '1' {
+        tar_file.file_type = TarFileType::SymbolicLink as i32;
+        if img_info.last_link_name != "" {
+            tar_file.link = img_info.last_link_name.clone();
+        }
+    } else if hdr.get_type_flag() == 'K' {
+        img_info.last_link_name = hdr.get_link_name();
+    }
+    Ok((Box::new(tar_file),n))
 }
 
 #[repr(u32)] // 确保底层表示是 u32 类型

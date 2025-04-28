@@ -24,11 +24,11 @@ pub struct TarHeader {
     pub padding: [u8; 12],
 }
 
-pub unsafe fn read_tar_header(buf: &[u8]) -> io::Result<(TarHeader, u64)> {
+pub unsafe fn read_tar_header(buf: &[u8]) -> io::Result<TarHeader> {
     assert!(buf.len() >= size_of::<TarHeader>());
     let ptr = buf.as_ptr() as *const TarHeader;
     let hdr = read_unaligned(ptr);
-    Ok((hdr, 512))
+    Ok(hdr)
 }
 
 impl TarHeader {
