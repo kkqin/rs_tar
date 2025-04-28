@@ -2,6 +2,25 @@ use std::mem::{size_of, align_of};
 use std::ptr::read_unaligned;
 use std::io;
 
+const T_BLOCKSIZE : usize = 512;
+
+#[repr(u32)] // 确保底层表示是 u32 类型
+pub enum TarFileType {
+    Undefined = 0x00,
+    Regular = 0x01,
+    Directory = 0x02,
+    Fifo = 0x03,
+    CharacterDevice = 0x04,
+    BlockDevice = 0x05,
+    SymbolicLink = 0x06,
+    Shadow = 0x07, // SOLARIS ONLY
+    UnixDomainSocket = 0x08,
+    Whiteout = 0x09,
+    VirtualFile = 0x0a, // Virtual File created by TSK for file system areas
+    VirtualDirectory = 0x0b, // Virtual Directory created by TSK to hold data like orphan files
+}
+
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct TarHeader {
@@ -112,5 +131,46 @@ impl TarHeader {
             Err(_) => String::new(),
         }
     }
+
+        /// 检查 checksum 是否正确
+    pub fn crc_ok(&self) -> bool {
+        let real_crc = self.get_crc();
+        real_crc == self.crc_calc() || real_crc == self.signed_crc_calc()
+    }
+
+    pub fn crc_calc(&self) -> i32 {
+        let ptr = self as *const _ as *const u8;
+        let buf = unsafe { std::slice::from_raw_parts(ptr, T_BLOCKSIZE) };
+
+        let mut sum = 0i32;
+        for &b in buf {
+            sum += b as i32;
+        }
+        for &b in &self.chksum {
+            sum -= b as i32;
+        }
+        sum + (' ' as i32) * (self.chksum.len() as i32)
+    }
+
+    /// 计算 signed 校验和
+    pub fn signed_crc_calc(&self) -> i32 {
+        let ptr = self as *const _ as *const i8;
+        let buf = unsafe { std::slice::from_raw_parts(ptr, T_BLOCKSIZE) };
+
+        let mut sum = 0i32;
+        for &b in buf {
+            sum += b as i32;
+        }
+        for &b in &self.chksum {
+            sum += (' ' as i8 - b as i8) as i32;
+        }
+        sum
+    }
+
+    /// 获取 header 中保存的 checksum
+    pub fn get_crc(&self) -> i32 {
+        Self::parse_octal(&self.chksum) as i32
+    }
+
 }
 

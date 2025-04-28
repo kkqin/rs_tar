@@ -1,9 +1,13 @@
 use core::num;
 use std::{fs::File, io::{self, Read, Seek, SeekFrom}, sync::Arc};
-use crate::tar::{TarHeader, read_tar_header};
+use crate::tar::{TarHeader, read_tar_header, TarFileType};
+use std::any::Any;
 
 /// 文件信息行为抽象，继承 Read + Seek
-pub trait FileInfo: Read + Seek {}
+pub trait FileInfo: Read + Seek + Any {
+    fn as_any(&self) -> &dyn Any;
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
+}
 
 /// 镜像信息抽象接口
 pub trait ImageInfo: Sized + Read + Seek {
@@ -87,8 +91,12 @@ impl ImageInfo for TarImage {
             match read_file_header(self, off) {
                 Ok(file_res) => {
                     let (file, n) = file_res;
-                    callback(file)?;
+                    let tar_file = try_into_tarfile(file)?;
+                    if tar_file.header.get_type_flag() == 'K' {
+                       off += tar_file.header_size;
+                    }
                     off += n;
+                    callback(tar_file)?;
                 },
                 Err(e) => {
                     eprintln!("Error reading file header: {}", e);
@@ -131,9 +139,9 @@ pub fn tar_hdr_read_internal(img_info: &mut TarImage, offset: u64) -> io::Result
         }
 
         // 验证 checksum
-        /*if !th_crc_ok(&hdr) {
+        if !hdr.crc_ok() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "tar header checksum error"));
-        }*/
+        }
 
         // 成功解析到有效 header，返回 header 和已读取的大小
         return Ok((hdr, header_size));
@@ -154,27 +162,16 @@ fn read_file_header(img_info :&mut TarImage, offset:u64) -> io::Result<(Box<dyn 
     } else if hdr.get_type_flag() == 'K' {
         img_info.last_link_name = hdr.get_link_name();
     }
+    tar_file.header_size = n;
+    if tar_file.header_size == 0 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "tar header size is zero"));
+    }
     Ok((Box::new(tar_file),n))
-}
-
-#[repr(u32)] // 确保底层表示是 u32 类型
-pub enum TarFileType {
-    Undefined = 0x00,
-    Regular = 0x01,
-    Directory = 0x02,
-    Fifo = 0x03,
-    CharacterDevice = 0x04,
-    BlockDevice = 0x05,
-    SymbolicLink = 0x06,
-    Shadow = 0x07, // SOLARIS ONLY
-    UnixDomainSocket = 0x08,
-    Whiteout = 0x09,
-    VirtualFile = 0x0a, // Virtual File created by TSK for file system areas
-    VirtualDirectory = 0x0b, // Virtual Directory created by TSK to hold data like orphan files
 }
 
 
 /// Tar 文件片段结构，包含镜像引用、起始偏移和结束偏移
+#[derive(Clone)]
 pub struct TarFile {
     image: Arc<TarImage>,
     header : TarHeader,
@@ -182,6 +179,7 @@ pub struct TarFile {
     pos: u64,
     file_type: i32,
     link : String,
+    header_size: u64,
 }
 
 impl TarFile {
@@ -193,6 +191,7 @@ impl TarFile {
             pos: 0,
             file_type: -1,
             link: String::new(),
+            header_size: 0,
         }
     }
 }
@@ -230,4 +229,17 @@ impl Seek for TarFile {
 }
 
 /// 将 TarFile 标记为 FileInfo
-impl FileInfo for TarFile {}
+impl FileInfo for TarFile {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+pub fn try_into_tarfile(b: Box<dyn FileInfo>) -> io::Result<Box<TarFile>> {
+    b.into_any().downcast::<TarFile>().map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidData, "Type is not TarFile")
+    })
+}
