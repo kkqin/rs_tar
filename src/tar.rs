@@ -1,4 +1,4 @@
-use std::mem::{size_of, align_of};
+use std::mem::size_of;
 use std::ptr::read_unaligned;
 use std::io;
 
