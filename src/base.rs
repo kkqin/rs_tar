@@ -1,4 +1,4 @@
-use std::{fs::File, io::{self, Read, Seek, SeekFrom}, ops::DerefMut, sync::{Arc, Mutex}};
+use std::{fs::File, io::{self, Read, Seek, SeekFrom}, sync::{Arc, Mutex}};
 use crate::tar::{TarHeader, read_tar_header, TarFileType};
 use std::any::Any;
 
@@ -248,6 +248,9 @@ impl FileInfo for TarFile {
 impl TarFile {
     pub fn get_name(&self) -> String {
         self.header.get_name()
+    }
+    pub fn get_size(&self) -> u64 {
+        self.header.get_size()
     }
 }
 
