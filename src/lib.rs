@@ -1,2 +1,2 @@
-mod pt;
-mod tar;
+pub mod base;
+pub mod tar;

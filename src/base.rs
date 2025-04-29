@@ -1,4 +1,4 @@
-use std::{fs::File, io::{self, Read, Seek, SeekFrom}, sync::Arc, sync::Mutex};
+use std::{fs::File, io::{self, Read, Seek, SeekFrom}, ops::DerefMut, sync::{Arc, Mutex}};
 use crate::tar::{TarHeader, read_tar_header, TarFileType};
 use std::any::Any;
 
@@ -11,7 +11,7 @@ pub trait FileInfo: Read + Seek + Any {
 /// 镜像信息抽象接口
 pub trait ImageInfo: Sized + Read + Seek {
     /// 打开一个镜像并返回智能指针
-    fn open(path: &str) -> io::Result<Arc<Self>>;
+    fn open(path: &str) -> io::Result<Arc<Mutex<Self>>>;
     /// 获取镜像文件总大小
     fn get_size(&self) -> io::Result<u64>;
     fn read_img_at(&mut self, offset: u64, size: u64) -> io::Result<(Vec<u8>, u64)>;
@@ -46,15 +46,15 @@ impl Seek for TarImage {
 }
 
 impl ImageInfo for TarImage {
-    fn open(path: &str) -> io::Result<Arc<Self>> {
+    fn open(path: &str) -> io::Result<Arc<Mutex<Self>>> {
         let file = Arc::new(File::open(path)?);
         let size = file.metadata()?.len();
-        Ok(Arc::new(TarImage {
+        Ok(Arc::new(Mutex::new(TarImage {
             file,
             path: path.to_string(),
             size,
             last_link_name: String::new(),
-        }))
+        })))
     }
 
     fn get_size(&self) -> io::Result<u64> {
@@ -242,6 +242,12 @@ impl FileInfo for TarFile {
     }
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
+    }
+}
+
+impl TarFile {
+    pub fn get_name(&self) -> String {
+        self.header.get_name()
     }
 }
 
