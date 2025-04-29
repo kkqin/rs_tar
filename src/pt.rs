@@ -1,5 +1,4 @@
-use core::num;
-use std::{fs::File, io::{self, Read, Seek, SeekFrom}, sync::Arc};
+use std::{fs::File, io::{self, Read, Seek, SeekFrom}, sync::Arc, sync::Mutex};
 use crate::tar::{TarHeader, read_tar_header, TarFileType};
 use std::any::Any;
 
@@ -160,7 +159,7 @@ pub fn tar_hdr_read_internal(img_info: &mut TarImage, offset: u64) -> io::Result
 
 fn read_file_header(img_info :&mut TarImage, offset:u64) -> io::Result<(Box<dyn FileInfo>, u64)> {
     let (hdr, n) = tar_hdr_read_internal(img_info, offset)?;
-    let mut tar_file = TarFile::new(Arc::new(img_info.clone()), hdr);
+    let mut tar_file = TarFile::new(Arc::new(img_info.clone().into()), hdr);
     tar_file.base_offset = offset;
     if hdr.get_type_flag() == '5' {
         tar_file.file_type = TarFileType::Directory as i32;
@@ -172,10 +171,10 @@ fn read_file_header(img_info :&mut TarImage, offset:u64) -> io::Result<(Box<dyn 
     } else if hdr.get_type_flag() == 'K' {
         img_info.last_link_name = hdr.get_link_name();
     }
-    tar_file.header_size = n;
     if tar_file.header_size == 0 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "tar header size is zero"));
     }
+    tar_file.header_size = n;
     Ok((Box::new(tar_file),n))
 }
 
@@ -183,7 +182,7 @@ fn read_file_header(img_info :&mut TarImage, offset:u64) -> io::Result<(Box<dyn 
 /// Tar 文件片段结构，包含镜像引用、起始偏移和结束偏移
 #[derive(Clone)]
 pub struct TarFile {
-    image: Arc<TarImage>,
+    image: Arc<Mutex<TarImage>>,
     header : TarHeader,
     base_offset: u64,
     pos: u64,
@@ -193,7 +192,7 @@ pub struct TarFile {
 }
 
 impl TarFile {
-    pub fn new(image: Arc<TarImage>, hdr: TarHeader) -> Self {
+    pub fn new(image: Arc<Mutex<TarImage>>, hdr: TarHeader) -> Self {
         TarFile {
             image,
             header: hdr,
@@ -208,33 +207,31 @@ impl TarFile {
 
 impl Read for TarFile {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        /*if self.pos >= self.end_offset {
+        let mut img = self.image.try_lock().map_err(|_| {
+            io::Error::new(io::ErrorKind::Other, "Failed to lock TarImage")
+        })?;
+        if self.pos >= self.header.get_size() {
             return Ok(0);
         }
-        let remaining = (self.end_offset - self.pos) as usize;
-        let to_read = buf.len().min(remaining);
-        let mut file = self.image.file.as_ref().try_clone()?;
-        file.seek(SeekFrom::Start(self.pos))?;
-        let n = file.read(&mut buf[..to_read])?;
-        self.pos += n as u64;*/
-        Ok(0)
+        img.seek(SeekFrom::Start(self.pos))?;
+        Ok(img.read(buf).map(|n| {
+            self.pos += n as u64;
+            n
+        })?)
     }
 }
 
 impl Seek for TarFile {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let mut img = self.image.try_lock().map_err(|_| {
+            io::Error::new(io::ErrorKind::Other, "Failed to lock TarImage")
+        })?;
         let new_pos = match pos {
-            SeekFrom::Start(n) => self.base_offset.saturating_add(n),
-            SeekFrom::End(n) => (self.pos + self.header.get_size()).saturating_add(n.try_into().unwrap()) as u64,
-            SeekFrom::Current(n) => (self.pos as i64).saturating_add(n) as u64,
+            SeekFrom::Start(n) => SeekFrom::Start(self.base_offset + n),
+            SeekFrom::End(n) => SeekFrom::End(n),
+            SeekFrom::Current(n) => SeekFrom::Current(n),
         };
-        /*if new_pos < self.base_offset || new_pos > self.end_offset {
-            Err(io::Error::new(io::ErrorKind::InvalidInput, "seek out of range"))
-        } else {
-            self.pos = new_pos;
-            Ok(self.pos - self.base_offset)
-        }*/
-        Err(io::Error::new(io::ErrorKind::InvalidInput, "not implemented"))
+        Ok(img.seek(new_pos)?)
     }
 }
 
