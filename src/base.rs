@@ -252,6 +252,9 @@ impl TarFile {
     pub fn get_size(&self) -> u64 {
         self.header.get_size()
     }
+    pub fn get_type_flag(&self) -> char {
+        self.header.get_type_flag()
+    }
 }
 
 pub fn try_into_tarfile(b: Box<dyn FileInfo>) -> io::Result<Box<TarFile>> {
