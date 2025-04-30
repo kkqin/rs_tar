@@ -45,6 +45,12 @@ impl Seek for TarImage {
     }
 }
 
+impl TarImage {
+    pub fn get_path(&self) -> String {
+        self.path.clone()
+    }
+}
+
 impl ImageInfo for TarImage {
     fn open(path: &str) -> io::Result<Arc<Mutex<Self>>> {
         let file = Arc::new(File::open(path)?);
