@@ -171,7 +171,7 @@ fn read_file_header(img_info :&mut TarImage, offset:u64) -> io::Result<(Box<dyn 
     } else if hdr.get_type_flag() == 'K' {
         img_info.last_link_name = hdr.get_link_name();
     }
-    if tar_file.header_size == 0 {
+    if n == 0 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "tar header size is zero"));
     }
     tar_file.header_size = n;

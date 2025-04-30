@@ -90,7 +90,13 @@ impl TarHeader {
         match std::str::from_utf8(field) {
             Ok(s) => {
                 let s = s.trim_end_matches('\0').trim();
-                u64::from_str_radix(s, 8).unwrap_or(0)
+                match u64::from_str_radix(s.trim_matches('\0'), 8) {
+                    Ok(i) => i,
+                    Err(e) => {
+                        println!("Error parsing octal: {}", e);
+                        0
+                    },
+                }
             }
             Err(_) => 0,
         }
