@@ -255,6 +255,9 @@ impl TarFile {
     pub fn get_type_flag(&self) -> char {
         self.header.get_type_flag()
     }
+    pub fn get_offset(&self) -> u64 {
+        self.base_offset
+    }
 }
 
 pub fn try_into_tarfile(b: Box<dyn FileInfo>) -> io::Result<Box<TarFile>> {

@@ -14,7 +14,7 @@ fn test_pt_tar() {
     };
     match img.try_lock().unwrap().for_each_entry(|file| {
         let tarfile = try_into_tarfile(file).unwrap();
-        println!("{} {} {}", tarfile.get_name(), tarfile.get_size(), tarfile.get_type_flag());
+        println!("{} : {} {} {}", tarfile.get_offset(),tarfile.get_name(), tarfile.get_size(), tarfile.get_type_flag());
         Ok(())
     }) {
         Ok(_) => println!("Successfully iterated through tar entries."),
