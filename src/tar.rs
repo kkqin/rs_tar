@@ -67,7 +67,27 @@ impl TarHeader {
 
     /// 从 tar header 中读取 size 字段
     pub fn get_size(&self) -> u64 {
-        Self::parse_octal(&self.size)
+        let size = &self.size; // 假设 self.size 是 [u8; 12]
+
+        // 判断是不是 GNU tar binary 编码
+        if size[0] & 0x80 == 0x80 {
+            // Binary 编码
+            // 忽略前导的 0（除了首个 0x80 标志位）
+            let mut start = 1;
+            while start < 12 && size[start] == 0 {
+                start += 1;
+            }
+
+            let mut x: u64 = 0;
+            for &b in &size[start..] {
+                x = (x << 8) | (b as u64);
+            }
+
+            x
+        } else {
+            // Octal 编码 (以 ASCII 编码的八进制字符串)
+            Self::parse_octal(size)
+        }
     }
 
     /// 从 tar header 中读取 uid 字段
