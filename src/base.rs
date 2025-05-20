@@ -164,7 +164,27 @@ pub fn tar_hdr_read_internal(img_info: &mut TarImage, offset: u64) -> io::Result
 }
 
 fn read_file_header(img_info :&mut TarImage, offset:u64) -> io::Result<(Box<dyn FileInfo>, u64)> {
-    let (hdr, n) = tar_hdr_read_internal(img_info, offset)?;
+    let mut current_offset = offset;
+    let (mut hdr, mut n) = tar_hdr_read_internal(img_info, offset)?;
+    current_offset += n;
+    if hdr.get_type_flag() == 'L' {
+        let sz = hdr.get_size();
+        let blocks = (sz / 512) + if (sz % 512) != 0 { 1 } else { 0 };
+        let extension_size = blocks * 512;
+        current_offset += extension_size;
+        (hdr, n)  = tar_hdr_read_internal(img_info, current_offset)?;
+        current_offset += n;
+    }
+
+    if hdr.get_type_flag() == 'K' {
+        let sz = hdr.get_size();
+        let blocks = (sz / 512) + if (sz % 512) != 0 { 1 } else { 0 };
+        let extension_size = blocks * 512;
+        current_offset += extension_size;
+    }
+
+    n = current_offset - offset; // 计算 header 大小
+
     let mut tar_file = TarFile::new(Arc::new(img_info.clone().into()), hdr);
     tar_file.base_offset = offset;
     if hdr.get_type_flag() == '5' {
